@@ -1,0 +1,45 @@
+
+> vite_react_shadcn_ts@0.0.0 build
+> vite build
+
+[36mvite v5.4.19 [32mbuilding for production...[36m[39m
+transforming...
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[32mΓ£ô[39m 2500 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                         [39m[1m[2m  0.70 kB[22m[1m[22m[2m Γöé gzip:   0.40 kB[22m
+[2mdist/[22m[35massets/index-CedAotrc.css          [39m[1m[2m 39.61 kB[22m[1m[22m[2m Γöé gzip:   7.45 kB[22m
+[2mdist/[22m[36massets/plus-Dcb_wf0D.js            [39m[1m[2m  0.32 kB[22m[1m[22m[2m Γöé gzip:   0.25 kB[22m
+[2mdist/[22m[36massets/trending-up-DO0gGdi5.js     [39m[1m[2m  0.37 kB[22m[1m[22m[2m Γöé gzip:   0.29 kB[22m
+[2mdist/[22m[36massets/ChartCard-1vDSzQGN.js       [39m[1m[2m  0.39 kB[22m[1m[22m[2m Γöé gzip:   0.27 kB[22m
+[2mdist/[22m[36massets/label-DWc9Aq9l.js           [39m[1m[2m  0.58 kB[22m[1m[22m[2m Γöé gzip:   0.39 kB[22m
+[2mdist/[22m[36massets/input-CFt_Io5c.js           [39m[1m[2m  0.62 kB[22m[1m[22m[2m Γöé gzip:   0.38 kB[22m
+[2mdist/[22m[36massets/NotFound-ByYRfEnE.js        [39m[1m[2m  0.65 kB[22m[1m[22m[2m Γöé gzip:   0.40 kB[22m
+[2mdist/[22m[36massets/mail-fcPJOiHc.js            [39m[1m[2m  0.71 kB[22m[1m[22m[2m Γöé gzip:   0.37 kB[22m
+[2mdist/[22m[36massets/shield-CDdr3AAF.js          [39m[1m[2m  0.80 kB[22m[1m[22m[2m Γöé gzip:   0.43 kB[22m
+[2mdist/[22m[36massets/StatCard-CMNUxX5B.js        [39m[1m[2m  1.02 kB[22m[1m[22m[2m Γöé gzip:   0.52 kB[22m
+[2mdist/[22m[36massets/card-CnvWDEci.js            [39m[1m[2m  1.03 kB[22m[1m[22m[2m Γöé gzip:   0.40 kB[22m
+[2mdist/[22m[36massets/badge-cNdBHonL.js           [39m[1m[2m  1.41 kB[22m[1m[22m[2m Γöé gzip:   0.67 kB[22m
+[2mdist/[22m[36massets/trending-down-DJluCXLC.js   [39m[1m[2m  1.81 kB[22m[1m[22m[2m Γöé gzip:   0.60 kB[22m
+[2mdist/[22m[36massets/DataTable-9lH6oNoR.js       [39m[1m[2m  1.84 kB[22m[1m[22m[2m Γöé gzip:   0.66 kB[22m
+[2mdist/[22m[36massets/Contracts-Ca6_A-kl.js       [39m[1m[2m  2.39 kB[22m[1m[22m[2m Γöé gzip:   1.10 kB[22m
+[2mdist/[22m[36massets/Financial-MLeYpfO3.js       [39m[1m[2m  2.56 kB[22m[1m[22m[2m Γöé gzip:   1.05 kB[22m
+[2mdist/[22m[36massets/Login-DDqc2OnU.js           [39m[1m[2m  2.95 kB[22m[1m[22m[2m Γöé gzip:   1.23 kB[22m
+[2mdist/[22m[36massets/api-DVxgNR54.js             [39m[1m[2m  3.77 kB[22m[1m[22m[2m Γöé gzip:   1.17 kB[22m
+[2mdist/[22m[36massets/Dashboard-BpJpxkIH.js       [39m[1m[2m  4.77 kB[22m[1m[22m[2m Γöé gzip:   1.87 kB[22m
+[2mdist/[22m[36massets/Signup-5a9oPE5H.js          [39m[1m[2m  5.06 kB[22m[1m[22m[2m Γöé gzip:   1.65 kB[22m
+[2mdist/[22m[36massets/ForgotPassword-4hC1im4H.js  [39m[1m[2m  5.58 kB[22m[1m[22m[2m Γöé gzip:   1.70 kB[22m
+[2mdist/[22m[36massets/Settings-3ZQIBSqX.js        [39m[1m[2m  5.77 kB[22m[1m[22m[2m Γöé gzip:   2.02 kB[22m
+[2mdist/[22m[36massets/Inventory-DYzcypxv.js       [39m[1m[2m 26.13 kB[22m[1m[22m[2m Γöé gzip:   7.54 kB[22m
+[2mdist/[22m[36massets/Insights-5KNOCXgn.js        [39m[1m[2m 43.50 kB[22m[1m[22m[2m Γöé gzip:  14.12 kB[22m
+[2mdist/[22m[36massets/index-DQCthUWL.js           [39m[1m[2m197.37 kB[22m[1m[22m[2m Γöé gzip:  63.74 kB[22m
+[2mdist/[22m[36massets/recharts-Dm_3d4or.js        [39m[1m[33m576.10 kB[39m[22m[2m Γöé gzip: 160.23 kB[22m
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[32mΓ£ô built in 9.13s[39m
