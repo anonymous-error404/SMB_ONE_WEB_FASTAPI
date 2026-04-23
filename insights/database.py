@@ -42,16 +42,23 @@ def dict_from_row(row):
     return {key: row[key] for key in row.keys()}
 
 def format_date_for_frontend(date_str):
-    """Convert date from YYYY-MM-DD to DD-MM-YYYY format"""
+    """Convert date to DD-MM-YYYY format"""
     if not date_str:
         return date_str
+    
+    # If it's already a date or datetime object from psycopg2
+    if hasattr(date_str, 'strftime'):
+        return date_str.strftime('%d-%m-%Y')
+        
     try:
         # Parse the date string and format it as DD-MM-YYYY
-        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-        return date_obj.strftime('%d-%m-%Y')
+        if isinstance(date_str, str):
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            return date_obj.strftime('%d-%m-%Y')
     except (ValueError, TypeError):
-        # If parsing fails, return original string
-        return date_str
+        pass
+        
+    return str(date_str)
 
 
 def ensure_user_columns():
@@ -88,181 +95,287 @@ except Exception:
 # =====================================================================
 
 def get_dashboard_stats(user_id: int = None):
-    """Get all dashboard statistics. If user_id is provided, filter data to that user."""
+    """Get all dashboard statistics, including escrow contracts and blockchain payments."""
     with get_db() as conn:
         cursor = conn.cursor()
-        
-        # First check if user has any data
+
+        # Resolve wallet address for blockchain augmentation
+        wallet_address = None
         if user_id is not None:
-            cursor.execute("SELECT COUNT(*) as count FROM sales WHERE user_id = ?", (user_id,))
-            user_sales = cursor.fetchone()['count']
-            
-            if user_sales == 0:
-                return {
-                    'totalRevenue': 0,
-                    'totalOrders': 0,
-                    'totalCustomers': 0,
-                    'revenueGrowth': 0,
-                    'orderGrowth': 0,
-                    'customerGrowth': 0,
-                    'has_data': False,
-                    'message': "No business data available yet. Start by adding your first sales records."
-                }
-        else:
-            # Check if there's any data in the system at all
-            cursor.execute("SELECT COUNT(*) as count FROM sales")
-            total_sales = cursor.fetchone()['count']
-            
-            if total_sales == 0:
-                return {
-                    'totalRevenue': 0,
-                    'totalOrders': 0,
-                    'totalCustomers': 0,
-                    'revenueGrowth': 0,
-                    'orderGrowth': 0,
-                    'customerGrowth': 0,
-                    'has_data': False,
-                    'message': "No business data available in the system yet."
-                }
-        
-        # Get revenue and order stats
-        if user_id is None:
+            try:
+                cursor.execute("SELECT wallet_address FROM users WHERE id = %s", (user_id,))
+                w_row = cursor.fetchone()
+                if w_row and w_row.get('wallet_address'):
+                    wallet_address = w_row['wallet_address']
+            except Exception:
+                pass
+
+        # ── Sales & Revenue (from sales table) ───────────────────────────────
+        try:
+            if user_id is None:
+                cursor.execute("""
+                    SELECT SUM(revenue) as revenue, COUNT(*) as orders,
+                           COUNT(DISTINCT customer_id) as customers
+                    FROM sales
+                """)
+            else:
+                cursor.execute("""
+                    SELECT SUM(revenue) as revenue, COUNT(*) as orders,
+                           COUNT(DISTINCT customer_id) as customers
+                    FROM sales WHERE user_id = %s
+                """, (user_id,))
+            row = cursor.fetchone()
+            revenue = float(row['revenue'] or 0)
+            orders = int(row['orders'] or 0)
+        except Exception:
+            revenue, orders = 0.0, 0
+
+        # ── Revenue growth (prev 30 days vs current 30 days) ─────────────────
+        try:
+            if user_id is None:
+                cursor.execute("""
+                    SELECT SUM(revenue) as prev_revenue FROM sales
+                    WHERE date >= CURRENT_DATE - INTERVAL '60 days'
+                      AND date <  CURRENT_DATE - INTERVAL '30 days'
+                """)
+            else:
+                cursor.execute("""
+                    SELECT SUM(revenue) as prev_revenue FROM sales
+                    WHERE date >= CURRENT_DATE - INTERVAL '60 days'
+                      AND date <  CURRENT_DATE - INTERVAL '30 days'
+                      AND user_id = %s
+                """, (user_id,))
+            prev_row = cursor.fetchone()
+            prev_revenue = float(prev_row['prev_revenue'] or 0)
+            revenue_growth = ((revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
+        except Exception:
+            revenue_growth = 0.0
+
+        # ── Inventory value ───────────────────────────────────────────────────
+        try:
+            if user_id is None:
+                cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as v FROM products")
+            else:
+                cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as v FROM products WHERE user_id = %s", (user_id,))
+            inventory_value = float(cursor.fetchone()['v'] or 0)
+        except Exception:
+            inventory_value = 0.0
+
+        # ── Contracts (traditional contracts table) ───────────────────────────
+        try:
+            if user_id is None:
+                cursor.execute("SELECT COUNT(*) as c FROM contracts")
+                active_contracts = int(cursor.fetchone()['c'] or 0)
+                cursor.execute("SELECT COUNT(*) as c FROM contracts WHERE status = 'pending'")
+                pending_signatures = int(cursor.fetchone()['c'] or 0)
+            else:
+                cursor.execute("SELECT COUNT(*) as c FROM contracts WHERE user_id = %s", (user_id,))
+                active_contracts = int(cursor.fetchone()['c'] or 0)
+                cursor.execute("SELECT COUNT(*) as c FROM contracts WHERE status = 'pending' AND user_id = %s", (user_id,))
+                pending_signatures = int(cursor.fetchone()['c'] or 0)
+        except Exception:
+            active_contracts, pending_signatures = 0, 0
+
+        # ── Augment with escrow_contracts (OpsHub blockchain table) ──────────
+        try:
             cursor.execute("""
-                SELECT 
-                    SUM(revenue) as revenue,
-                    COUNT(*) as orders,
-                    COUNT(DISTINCT customer_id) as customers
-                FROM sales
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
             """)
-        else:
+            if cursor.fetchone()['cnt'] > 0:
+                if wallet_address:
+                    cursor.execute("""
+                        SELECT COUNT(*) as c FROM escrow_contracts
+                        WHERE status = 'LOCKED_ON_CHAIN'
+                          AND (buyer_wallet = %s OR seller_wallet = %s)
+                    """, (wallet_address, wallet_address))
+                    active_contracts += int(cursor.fetchone()['c'] or 0)
+                    cursor.execute("""
+                        SELECT COUNT(*) as c FROM escrow_contracts
+                        WHERE status = 'PENDING_PAYMENT'
+                          AND (buyer_wallet = %s OR seller_wallet = %s)
+                    """, (wallet_address, wallet_address))
+                    pending_signatures += int(cursor.fetchone()['c'] or 0)
+                else:
+                    # No wallet yet — count all open escrow contracts
+                    cursor.execute("SELECT COUNT(*) as c FROM escrow_contracts WHERE status IN ('LOCKED_ON_CHAIN', 'PENDING_PAYMENT')")
+                    active_contracts += int(cursor.fetchone()['c'] or 0)
+        except Exception as e:
+            pass
+
+        # ── Cash flow & balance (from transactions table) ─────────────────────
+        try:
+            if user_id is None:
+                cursor.execute("SELECT SUM(amount) as cf FROM transactions WHERE date >= CURRENT_DATE - INTERVAL '30 days'")
+                cash_flow = float(cursor.fetchone()['cf'] or 0)
+                cursor.execute("SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as cb FROM transactions")
+                cash_balance = float(cursor.fetchone()['cb'] or 0)
+            else:
+                cursor.execute("SELECT SUM(amount) as cf FROM transactions WHERE date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = %s", (user_id,))
+                cash_flow = float(cursor.fetchone()['cf'] or 0)
+                cursor.execute("SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as cb FROM transactions WHERE user_id = %s", (user_id,))
+                cash_balance = float(cursor.fetchone()['cb'] or 0)
+        except Exception:
+            cash_flow, cash_balance = 0.0, 0.0
+
+        # ── Augment cash flow & balance with escrow_contracts table (OpsHub) ─────────
+        try:
             cursor.execute("""
-                SELECT 
-                    SUM(revenue) as revenue,
-                    COUNT(*) as orders,
-                    COUNT(DISTINCT customer_id) as customers
-                FROM sales
-                WHERE user_id = %s
-            """, (user_id,))
-        
-        row = cursor.fetchone()
-        revenue = float(row['revenue'] or 0)
-        orders = int(row['orders'] or 0)
-        customers = int(row['customers'] or 0)
-        
-        # Get growth calculations (comparing to previous month)
-        if user_id is None:
-            cursor.execute("""
-                SELECT 
-                    SUM(revenue) as prev_revenue,
-                    COUNT(*) as prev_orders
-                FROM sales 
-                WHERE date >= CURRENT_DATE - INTERVAL '60 days' 
-                AND date < CURRENT_DATE - INTERVAL '30 days'
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
             """)
-        else:
+            if cursor.fetchone()['cnt'] > 0 and wallet_address:
+                # All-time net impact on balance
+                cursor.execute("""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END), 0) AS inflow,
+                        COALESCE(SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END), 0) AS outflow
+                    FROM escrow_contracts
+                    WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                """, (wallet_address, wallet_address, wallet_address, wallet_address))
+                bal = cursor.fetchone()
+                cash_balance += float((bal['inflow'] or 0) - (bal['outflow'] or 0))
+
+                # This-month net impact on cash flow
+                cursor.execute("""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END), 0) AS inflow,
+                        COALESCE(SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END), 0) AS outflow
+                    FROM escrow_contracts
+                    WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                      AND created_at >= NOW() - INTERVAL '30 days'
+                """, (wallet_address, wallet_address, wallet_address, wallet_address))
+                flw = cursor.fetchone()
+                cash_flow += float((flw['inflow'] or 0) - (flw['outflow'] or 0))
+        except Exception as e:
+            pass
+
+        # Also add completed escrow amounts to revenue when user is seller
+        try:
             cursor.execute("""
-                SELECT 
-                    SUM(revenue) as prev_revenue,
-                    COUNT(*) as prev_orders
-                FROM sales 
-                WHERE date >= CURRENT_DATE - INTERVAL '60 days' 
-                AND date < CURRENT_DATE - INTERVAL '30 days'
-                AND user_id = %s
-            """, (user_id,))
-        
-        prev_row = cursor.fetchone()
-        prev_revenue = float(prev_row['prev_revenue'] or 0)
-        prev_orders = int(prev_row['prev_orders'] or 0)
-        
-        # Calculate growth percentages
-        revenue_growth = ((revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
-        orders_growth = ((orders - prev_orders) / prev_orders * 100) if prev_orders > 0 else 0
-        
-        # Get inventory value and related stats
-        if user_id is None:
-            cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as inventory_value FROM products")
-            inventory_value = float(cursor.fetchone()['inventory_value'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as contracts FROM contracts")
-            active_contracts = int(cursor.fetchone()['contracts'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as pending_contracts FROM contracts WHERE status = 'pending'")
-            pending_signatures = int(cursor.fetchone()['pending_contracts'] or 0)
-        else:
-            cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as inventory_value FROM products WHERE user_id = ?", (user_id,))
-            inventory_value = float(cursor.fetchone()['inventory_value'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as contracts FROM contracts WHERE user_id = ?", (user_id,))
-            active_contracts = int(cursor.fetchone()['contracts'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as pending_contracts FROM contracts WHERE status = 'pending' AND user_id = ?", (user_id,))
-            pending_signatures = int(cursor.fetchone()['pending_contracts'] or 0)
-        
-        # Get cash flow data
-        if user_id is None:
-            cursor.execute("SELECT SUM(amount) as cash_flow FROM transactions WHERE date >= CURRENT_DATE - INTERVAL '30 days'")
-            cash_flow = float(cursor.fetchone()['cash_flow'] or 0)
-            
-            cursor.execute("SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as cash_balance FROM transactions")
-            cash_balance = float(cursor.fetchone()['cash_balance'] or 0)
-        else:
-            cursor.execute("SELECT SUM(amount) as cash_flow FROM transactions WHERE date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = ?", (user_id,))
-            cash_flow = float(cursor.fetchone()['cash_flow'] or 0)
-            
-            cursor.execute("SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as cash_balance FROM transactions WHERE user_id = ?", (user_id,))
-            cash_balance = float(cursor.fetchone()['cash_balance'] or 0)
-        
-        # Get shipments
-        if user_id is None:
-            cursor.execute("SELECT COUNT(*) as shipments FROM shipments")
-            shipments = int(cursor.fetchone()['shipments'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as in_transit FROM shipments WHERE status = 'in_transit'")
-            shipments_in_transit = int(cursor.fetchone()['in_transit'] or 0)
-        else:
-            cursor.execute("SELECT COUNT(*) as shipments FROM shipments WHERE user_id = ?", (user_id,))
-            shipments = int(cursor.fetchone()['shipments'] or 0)
-            
-            cursor.execute("SELECT COUNT(*) as in_transit FROM shipments WHERE status = 'in_transit' AND user_id = ?", (user_id,))
-            shipments_in_transit = int(cursor.fetchone()['in_transit'] or 0)
-        
-        # Return data in the format expected by frontend
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            if cursor.fetchone()['cnt'] > 0 and wallet_address:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(amount::numeric), 0) as total
+                    FROM escrow_contracts
+                    WHERE status = 'COMPLETED' AND seller_wallet = %s
+                """, (wallet_address,))
+                escrow_revenue = float(cursor.fetchone()['total'] or 0)
+                revenue += escrow_revenue
+        except Exception:
+            pass
+
+        # ── Shipments ─────────────────────────────────────────────────────────
+        try:
+            if user_id is None:
+                cursor.execute("SELECT COUNT(*) as s FROM shipments")
+                shipments = int(cursor.fetchone()['s'] or 0)
+                cursor.execute("SELECT COUNT(*) as s FROM shipments WHERE status = 'in_transit'")
+                shipments_in_transit = int(cursor.fetchone()['s'] or 0)
+            else:
+                cursor.execute("SELECT COUNT(*) as s FROM shipments WHERE user_id = %s", (user_id,))
+                shipments = int(cursor.fetchone()['s'] or 0)
+                cursor.execute("SELECT COUNT(*) as s FROM shipments WHERE status = 'in_transit' AND user_id = %s", (user_id,))
+                shipments_in_transit = int(cursor.fetchone()['s'] or 0)
+        except Exception:
+            shipments, shipments_in_transit = 0, 0
+
+        # Has data if anything is non-zero
+        has_data = any([revenue > 0, active_contracts > 0, cash_flow != 0,
+                        cash_balance != 0, inventory_value > 0])
+
         return {
             'totalRevenue': revenue,
             'revenueChange': round(revenue_growth, 1),
             'inventoryValue': inventory_value,
-            'inventoryChange': round(revenue_growth * 0.3, 1),  # Approximation
+            'inventoryChange': round(revenue_growth * 0.3, 1),
             'activeContracts': active_contracts,
             'pendingSignatures': pending_signatures,
             'cashBalance': cash_balance,
-            'cashBalanceChange': round(revenue_growth * 0.5, 1),  # Approximation
+            'cashBalanceChange': round(revenue_growth * 0.5, 1),
             'cashFlow': cash_flow,
             'cashFlowPeriod': 'This month',
             'shipments': shipments,
             'shipmentsInTransit': shipments_in_transit,
-            'has_data': True,
-            'message': "Dashboard data available"
+            'has_data': has_data,
+            'message': 'Dashboard data available' if has_data else 'No data yet'
         }
 
 def get_monthly_revenue(months=6, user_id: int = None):
-    """Get monthly revenue for last N months"""
-    base = f"""
-        SELECT 
-            TO_CHAR(date, 'YYYY-MM') as month,
-            SUM(revenue) as revenue
-        FROM sales 
-        WHERE date >= date('now', '-{months} months')
-    """
-    
-    if user_id is None:
-        query = base + " GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month"
-        params = ()
-    else:
-        query = base + " AND user_id = %s GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month"
-        params = (user_id,)
-    
+    """Get monthly revenue for last N months, augmented with blockchain data"""
     with get_db() as conn:
         cursor = conn.cursor()
+        
+        wallet_address = None
+        if user_id is not None:
+            try:
+                cursor.execute("SELECT wallet_address FROM users WHERE id = %s", (user_id,))
+                w_row = cursor.fetchone()
+                if w_row and w_row.get('wallet_address'):
+                    wallet_address = w_row['wallet_address']
+            except Exception:
+                pass
+
+        has_escrow = False
+        try:
+            cursor.execute("SELECT COUNT(*) as cnt FROM information_schema.tables WHERE table_name = 'escrow_contracts'")
+            has_escrow = cursor.fetchone()['cnt'] > 0
+        except Exception:
+            pass
+
+        if has_escrow and wallet_address:
+            if user_id is None:
+                query = f"""
+                    SELECT month, SUM(revenue) as revenue
+                    FROM (
+                        SELECT TO_CHAR(date, 'YYYY-MM') as month, revenue
+                        FROM sales
+                        WHERE date >= CURRENT_DATE - INTERVAL '{months} months'
+                        UNION ALL
+                        SELECT TO_CHAR(created_at, 'YYYY-MM') as month, amount::numeric as revenue
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED'
+                          AND created_at >= CURRENT_DATE - INTERVAL '{months} months'
+                    ) combined
+                    GROUP BY month ORDER BY month
+                """
+                params = ()
+            else:
+                query = f"""
+                    SELECT month, SUM(revenue) as revenue
+                    FROM (
+                        SELECT TO_CHAR(date, 'YYYY-MM') as month, revenue
+                        FROM sales
+                        WHERE date >= CURRENT_DATE - INTERVAL '{months} months' AND user_id = %s
+                        UNION ALL
+                        SELECT TO_CHAR(created_at, 'YYYY-MM') as month, amount::numeric as revenue
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED' AND seller_wallet = %s
+                          AND created_at >= CURRENT_DATE - INTERVAL '{months} months'
+                    ) combined
+                    GROUP BY month ORDER BY month
+                """
+                params = (user_id, wallet_address)
+        else:
+            if user_id is None:
+                query = f"""
+                    SELECT TO_CHAR(date, 'YYYY-MM') as month, SUM(revenue) as revenue
+                    FROM sales 
+                    WHERE date >= CURRENT_DATE - INTERVAL '{months} months'
+                    GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month
+                """
+                params = ()
+            else:
+                query = f"""
+                    SELECT TO_CHAR(date, 'YYYY-MM') as month, SUM(revenue) as revenue
+                    FROM sales 
+                    WHERE date >= CURRENT_DATE - INTERVAL '{months} months' AND user_id = %s
+                    GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month
+                """
+                params = (user_id,)
+        
         cursor.execute(query, params)
         monthly_revenue_data = [dict_from_row(row) for row in cursor.fetchall()]
         
@@ -306,22 +419,22 @@ def get_inventory_stats(user_id: int = None):
             cursor.execute("SELECT COUNT(*) as count FROM products WHERE last_restock_date >= CURRENT_DATE - INTERVAL '30 days'")
             new_items = cursor.fetchone()['count']
         else:
-            cursor.execute("SELECT COUNT(*) as count FROM products WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as count FROM products WHERE user_id = %s", (user_id,))
             total_products = cursor.fetchone()['count']
             
-            cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as value FROM products WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COALESCE(SUM(price * stock), 0) as value FROM products WHERE user_id = %s", (user_id,))
             stock_value = cursor.fetchone()['value']
             
-            cursor.execute("SELECT COUNT(*) as count FROM products WHERE stock <= reorder_level AND user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as count FROM products WHERE stock <= reorder_level AND user_id = %s", (user_id,))
             low_stock = cursor.fetchone()['count']
             
-            cursor.execute("SELECT COUNT(DISTINCT customer_id) as count FROM sales WHERE date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(DISTINCT customer_id) as count FROM sales WHERE date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = %s", (user_id,))
             total_orders = cursor.fetchone()['count']
             
-            cursor.execute("SELECT COUNT(*) as count FROM suppliers WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as count FROM suppliers WHERE user_id = %s", (user_id,))
             total_suppliers = cursor.fetchone()['count']
             
-            cursor.execute("SELECT COUNT(*) as count FROM products WHERE last_restock_date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as count FROM products WHERE last_restock_date >= CURRENT_DATE - INTERVAL '30 days' AND user_id = %s", (user_id,))
             new_items = cursor.fetchone()['count']
         
         return {
@@ -441,25 +554,94 @@ def get_low_stock_items(user_id: int = None):
 # =====================================================================
 
 def get_cash_flow_data(months=6, user_id: int = None):
-    """Get cash flow data for last N months"""
-    base = f"""
-        SELECT 
-            TO_CHAR(date, 'YYYY-MM') as month,
-            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
-        FROM transactions 
-        WHERE date >= date('now', '-{months} months')
-    """
-    
-    if user_id is None:
-        query = base + " GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month"
-        params = ()
-    else:
-        query = base + " AND user_id = %s GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month"
-        params = (user_id,)
-    
+    """Get cash flow data for last N months, augmented with blockchain data"""
     with get_db() as conn:
         cursor = conn.cursor()
+        
+        wallet_address = None
+        if user_id is not None:
+            try:
+                cursor.execute("SELECT wallet_address FROM users WHERE id = %s", (user_id,))
+                w_row = cursor.fetchone()
+                if w_row and w_row.get('wallet_address'):
+                    wallet_address = w_row['wallet_address']
+            except Exception:
+                pass
+
+        has_escrow = False
+        try:
+            cursor.execute("SELECT COUNT(*) as cnt FROM information_schema.tables WHERE table_name = 'escrow_contracts'")
+            has_escrow = cursor.fetchone()['cnt'] > 0
+        except Exception:
+            pass
+
+        if has_escrow and wallet_address:
+            if user_id is None:
+                query = f"""
+                    SELECT month, SUM(income) as income, SUM(expenses) as expenses
+                    FROM (
+                        SELECT TO_CHAR(date, 'YYYY-MM') as month,
+                            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                        FROM transactions
+                        WHERE date >= CURRENT_DATE - INTERVAL '{months} months'
+                        GROUP BY TO_CHAR(date, 'YYYY-MM')
+                        UNION ALL
+                        SELECT TO_CHAR(created_at, 'YYYY-MM') as month,
+                            SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END) as income,
+                            SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END) as expenses
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                          AND created_at >= CURRENT_DATE - INTERVAL '{months} months'
+                        GROUP BY TO_CHAR(created_at, 'YYYY-MM')
+                    ) combined
+                    GROUP BY month ORDER BY month
+                """
+                params = (wallet_address, wallet_address, wallet_address, wallet_address)
+            else:
+                query = f"""
+                    SELECT month, SUM(income) as income, SUM(expenses) as expenses
+                    FROM (
+                        SELECT TO_CHAR(date, 'YYYY-MM') as month,
+                            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                        FROM transactions
+                        WHERE date >= CURRENT_DATE - INTERVAL '{months} months' AND user_id = %s
+                        GROUP BY TO_CHAR(date, 'YYYY-MM')
+                        UNION ALL
+                        SELECT TO_CHAR(created_at, 'YYYY-MM') as month,
+                            SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END) as income,
+                            SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END) as expenses
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                          AND created_at >= CURRENT_DATE - INTERVAL '{months} months'
+                        GROUP BY TO_CHAR(created_at, 'YYYY-MM')
+                    ) combined
+                    GROUP BY month ORDER BY month
+                """
+                params = (user_id, wallet_address, wallet_address, wallet_address, wallet_address)
+        else:
+            if user_id is None:
+                query = f"""
+                    SELECT TO_CHAR(date, 'YYYY-MM') as month,
+                        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                        SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                    FROM transactions 
+                    WHERE date >= CURRENT_DATE - INTERVAL '{months} months'
+                    GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month
+                """
+                params = ()
+            else:
+                query = f"""
+                    SELECT TO_CHAR(date, 'YYYY-MM') as month,
+                        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                        SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                    FROM transactions 
+                    WHERE date >= CURRENT_DATE - INTERVAL '{months} months' AND user_id = %s
+                    GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY month
+                """
+                params = (user_id,)
+        
         cursor.execute(query, params)
         cash_flow_data = [dict_from_row(row) for row in cursor.fetchall()]
         
@@ -477,75 +659,236 @@ def get_cash_flow_data(months=6, user_id: int = None):
         return cash_flow_data
 
 def get_daily_cash_flow_data(days=7, user_id: int = None):
-    """Get daily cash flow data for last N days"""
-    base = f"""
-        SELECT 
-            date,
-            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
-        FROM transactions 
-        WHERE date >= date('now', '-{days} days')
-    """
-    
-    if user_id is None:
-        query = base + " GROUP BY date ORDER BY date"
-        params = ()
-    else:
-        query = base + " AND user_id = %s GROUP BY date ORDER BY date"
-        params = (user_id,)
-    
+    """Get daily cash flow data for last N days, augmented with blockchain payments."""
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Resolve wallet for blockchain augmentation
+        wallet_address = None
+        if user_id is not None:
+            try:
+                cursor.execute("SELECT wallet_address FROM users WHERE id = %s", (user_id,))
+                w_row = cursor.fetchone()
+                if w_row and w_row.get('wallet_address'):
+                    wallet_address = w_row['wallet_address']
+            except Exception:
+                pass
+
+        # Check if payments table exists
+        has_payments = False
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            has_payments = cursor.fetchone()['cnt'] > 0
+        except Exception:
+            pass
+
+        if has_payments and wallet_address:
+            # UNION regular transactions with blockchain payments per day
+            if user_id is None:
+                query = f"""
+                    SELECT
+                        date,
+                        SUM(income) as income,
+                        SUM(expenses) as expenses
+                    FROM (
+                        SELECT
+                            date,
+                            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                        FROM transactions
+                        WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+                        GROUP BY date
+                        UNION ALL
+                        SELECT
+                            created_at::date AS date,
+                            SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END) as income,
+                            SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END) as expenses
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                          AND created_at >= NOW() - INTERVAL '{days} days'
+                        GROUP BY created_at::date
+                    ) combined
+                    GROUP BY date
+                    ORDER BY date
+                """
+                params = (wallet_address, wallet_address, wallet_address, wallet_address)
+            else:
+                query = f"""
+                    SELECT
+                        date,
+                        SUM(income) as income,
+                        SUM(expenses) as expenses
+                    FROM (
+                        SELECT
+                            date,
+                            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                            SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                        FROM transactions
+                        WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+                          AND user_id = %s
+                        GROUP BY date
+                        UNION ALL
+                        SELECT
+                            created_at::date AS date,
+                            SUM(CASE WHEN seller_wallet = %s THEN amount::numeric ELSE 0 END) as income,
+                            SUM(CASE WHEN buyer_wallet = %s THEN amount::numeric ELSE 0 END) as expenses
+                        FROM escrow_contracts
+                        WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                          AND created_at >= NOW() - INTERVAL '{days} days'
+                        GROUP BY created_at::date
+                    ) combined
+                    GROUP BY date
+                    ORDER BY date
+                """
+                params = (user_id, wallet_address, wallet_address, wallet_address, wallet_address)
+        else:
+            # No blockchain data — regular cash flow only
+            if user_id is None:
+                query = f"""
+                    SELECT date,
+                        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                        SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                    FROM transactions
+                    WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+                    GROUP BY date ORDER BY date
+                """
+                params = ()
+            else:
+                query = f"""
+                    SELECT date,
+                        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+                        SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as expenses
+                    FROM transactions
+                    WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+                      AND user_id = %s
+                    GROUP BY date ORDER BY date
+                """
+                params = (user_id,)
+
         cursor.execute(query, params)
         daily_cash_flow_data = [dict_from_row(row) for row in cursor.fetchall()]
-        
-        # Format dates for frontend (convert YYYY-MM-DD to DD-MM-YYYY format)
+
         for item in daily_cash_flow_data:
             item['date'] = format_date_for_frontend(item['date'])
-        
+
         return daily_cash_flow_data
 
 def get_transactions(limit=10, user_id: int = None):
-    """Get recent transactions, optionally filtered by user_id"""
-    if user_id is None:
-        query = """
-            SELECT 
-                reference_number as id,
-                description,
-                amount,
-                date,
-                type,
-                status
-            FROM transactions 
-            ORDER BY date DESC 
-            LIMIT %s
-        """
-        params = (limit,)
-    else:
-        query = """
-            SELECT 
-                reference_number as id,
-                description,
-                amount,
-                date,
-                type,
-                status
-            FROM transactions 
-            WHERE user_id = %s
-            ORDER BY date DESC 
-            LIMIT %s
-        """
-        params = (user_id, limit)
-    
+    """Get recent transactions (regular + blockchain payments), optionally filtered by user_id."""
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Resolve user wallet for blockchain payment lookup
+        wallet_address = None
+        if user_id is not None:
+            try:
+                cursor.execute("SELECT wallet_address FROM users WHERE id = %s", (user_id,))
+                w_row = cursor.fetchone()
+                if w_row and w_row.get('wallet_address'):
+                    wallet_address = w_row['wallet_address']
+            except Exception:
+                pass
+
+        # Check if payments table exists
+        has_payments = False
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            has_payments = cursor.fetchone()['cnt'] > 0
+        except Exception:
+            pass
+
+        transactions = []
+
+        if has_payments and wallet_address:
+            # UNION of regular transactions + blockchain payment proofs
+            if user_id is None:
+                query = """
+                    SELECT
+                        reference_number::text AS id,
+                        description,
+                        amount,
+                        date,
+                        type,
+                        status
+                    FROM transactions
+                    UNION ALL
+                    SELECT
+                        'BC-' || id::text AS id,
+                        CASE
+                            WHEN seller_wallet = %s THEN 'Escrow Payment Received'
+                            ELSE 'Escrow Payment Sent'
+                        END AS description,
+                        CASE
+                            WHEN seller_wallet = %s THEN amount::numeric
+                            ELSE -(amount::numeric)
+                        END AS amount,
+                        created_at::date AS date,
+                        'Blockchain' AS type,
+                        'completed' AS status
+                    FROM escrow_contracts
+                    WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                    ORDER BY date DESC
+                    LIMIT %s
+                """
+                params = (wallet_address, wallet_address, wallet_address, wallet_address, limit)
+            else:
+                query = """
+                    SELECT
+                        reference_number::text AS id,
+                        description,
+                        amount,
+                        date,
+                        type,
+                        status
+                    FROM transactions
+                    WHERE user_id = %s
+                    UNION ALL
+                    SELECT
+                        'BC-' || id::text AS id,
+                        CASE
+                            WHEN seller_wallet = %s THEN 'Escrow Payment Received'
+                            ELSE 'Escrow Payment Sent'
+                        END AS description,
+                        CASE
+                            WHEN seller_wallet = %s THEN amount::numeric
+                            ELSE -(amount::numeric)
+                        END AS amount,
+                        created_at::date AS date,
+                        'Blockchain' AS type,
+                        'completed' AS status
+                    FROM escrow_contracts
+                    WHERE status = 'COMPLETED' AND (seller_wallet = %s OR buyer_wallet = %s)
+                    ORDER BY date DESC
+                    LIMIT %s
+                """
+                params = (user_id, wallet_address, wallet_address, wallet_address, wallet_address, limit)
+        else:
+            # No blockchain data — fall back to regular transactions only
+            if user_id is None:
+                query = """
+                    SELECT reference_number as id, description, amount, date, type, status
+                    FROM transactions ORDER BY date DESC LIMIT %s
+                """
+                params = (limit,)
+            else:
+                query = """
+                    SELECT reference_number as id, description, amount, date, type, status
+                    FROM transactions WHERE user_id = %s ORDER BY date DESC LIMIT %s
+                """
+                params = (user_id, limit)
+
         cursor.execute(query, params)
         transactions = [dict_from_row(row) for row in cursor.fetchall()]
-        
-        # Format dates for frontend
+
         for transaction in transactions:
             transaction['date'] = format_date_for_frontend(transaction['date'])
-        
+
         return transactions
 
 # =====================================================================
@@ -600,7 +943,7 @@ def get_insights_stats(user_id: int = None):
             
         else:
             # Check if user has any sales data
-            cursor.execute("SELECT COUNT(*) as count FROM sales WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as count FROM sales WHERE user_id = %s", (user_id,))
             user_sales = cursor.fetchone()['count']
             
             if user_sales == 0:
@@ -731,13 +1074,13 @@ def get_business_metrics(user_id: int = None):
             cursor.execute("SELECT COUNT(*) as products FROM products")
             products = cursor.fetchone()['products'] or 0
         else:
-            cursor.execute("SELECT COUNT(DISTINCT customer_id) as customers FROM sales WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(DISTINCT customer_id) as customers FROM sales WHERE user_id = %s", (user_id,))
             customers = cursor.fetchone()['customers'] or 0
             
-            cursor.execute("SELECT AVG(revenue) as avg_order FROM sales WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT AVG(revenue) as avg_order FROM sales WHERE user_id = %s", (user_id,))
             avg_order = cursor.fetchone()['avg_order'] or 0
             
-            cursor.execute("SELECT COUNT(*) as products FROM products WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) as products FROM products WHERE user_id = %s", (user_id,))
             products = cursor.fetchone()['products'] or 0
         
         return {
@@ -1108,7 +1451,7 @@ def get_sales_dataframe(user_id: int = None):
         query = "SELECT * FROM sales"
         params = ()
     else:
-        query = "SELECT * FROM sales WHERE user_id = ?"
+        query = "SELECT * FROM sales WHERE user_id = %s"
         params = (user_id,)
     
     with get_db() as conn:
@@ -1120,7 +1463,7 @@ def get_products_dataframe(user_id: int = None):
         query = "SELECT * FROM products"
         params = ()
     else:
-        query = "SELECT * FROM products WHERE user_id = ?"
+        query = "SELECT * FROM products WHERE user_id = %s"
         params = (user_id,)
     
     with get_db() as conn:
@@ -1147,7 +1490,7 @@ def get_transactions_dataframe(user_id: int = None):
         query = "SELECT * FROM transactions"
         params = ()
     else:
-        query = "SELECT * FROM transactions WHERE user_id = ?"
+        query = "SELECT * FROM transactions WHERE user_id = %s"
         params = (user_id,)
     
     with get_db() as conn:
@@ -1311,7 +1654,7 @@ def delete_milestone(milestone_id, user_id):
     """Delete a milestone (only if it belongs to the user)"""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM milestones WHERE id = %s AND user_id = ?", (milestone_id, user_id))
+        cursor.execute("DELETE FROM milestones WHERE id = %s AND user_id = %s", (milestone_id, user_id))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -1374,3 +1717,271 @@ def calculate_milestone_progress(milestone_id, user_id):
             'target_value': milestone['target_value'],
             'progress_percentage': (current_value / milestone['target_value'] * 100) if milestone['target_value'] > 0 else 0
         }
+
+
+# =====================================================================
+# BLOCKCHAIN / SMART CONTRACTS QUERIES (reads OpsHub-managed tables)
+# =====================================================================
+
+def get_user_wallet_address(user_id: int):
+    """
+    Look up the blockchain wallet address for a given user_id.
+    Returns the wallet_address string or None if not onboarded.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT wallet_address FROM users WHERE id = %s",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row and row.get('wallet_address'):
+                return row['wallet_address']
+            return None
+    except Exception as e:
+        logger.error(f"get_user_wallet_address failed: {e}")
+        return None
+
+
+def get_blockchain_analytics(wallet_address: str = None):
+    """
+    Aggregate stats from escrow_contracts for the given wallet (or all if None).
+    Returns a dict with totalContracts, activeContracts, completedContracts,
+    pendingContracts, totalVolume, completionRate.
+    """
+    empty = {
+        'totalContracts': 0,
+        'activeContracts': 0,
+        'completedContracts': 0,
+        'pendingContracts': 0,
+        'totalVolume': 0.0,
+        'completionRate': 0.0,
+    }
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Check table exists
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                return empty
+
+            if wallet_address:
+                base_filter = "WHERE buyer_wallet = %s OR seller_wallet = %s"
+                params_all = (wallet_address, wallet_address)
+            else:
+                base_filter = ""
+                params_all = ()
+
+            cursor.execute(
+                f"SELECT COUNT(*) as total, COALESCE(SUM(amount::numeric), 0) as volume FROM escrow_contracts {base_filter}",
+                params_all
+            )
+            row = cursor.fetchone()
+            total = int(row['total'] or 0)
+            volume = float(row['volume'] or 0)
+
+            def count_status(status):
+                if wallet_address:
+                    cursor.execute(
+                        "SELECT COUNT(*) as c FROM escrow_contracts WHERE status = %s AND (buyer_wallet = %s OR seller_wallet = %s)",
+                        (status, wallet_address, wallet_address)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT COUNT(*) as c FROM escrow_contracts WHERE status = %s",
+                        (status,)
+                    )
+                return int(cursor.fetchone()['c'] or 0)
+
+            completed = count_status('COMPLETED')
+            locked = count_status('LOCKED_ON_CHAIN')
+            pending = count_status('PENDING_PAYMENT')
+
+            completion_rate = round((completed / total * 100), 1) if total > 0 else 0.0
+
+            return {
+                'totalContracts': total,
+                'activeContracts': locked,
+                'completedContracts': completed,
+                'pendingContracts': pending,
+                'totalVolume': volume,
+                'completionRate': completion_rate,
+            }
+    except Exception as e:
+        logger.error(f"get_blockchain_analytics failed: {e}")
+        return empty
+
+
+def get_escrow_contracts(wallet_address: str = None, limit: int = 100):
+    """
+    Fetch escrow contracts from the OpsHub-managed escrow_contracts table.
+    If wallet_address provided, only returns contracts involving that wallet.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Check table exists
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                return []
+
+            if wallet_address:
+                query = """
+                    SELECT
+                        e.escrow_id,
+                        e.buyer_wallet,
+                        e.seller_wallet,
+                        e.amount,
+                        e.status,
+                        e.initiator_wallet,
+                        e.deadline,
+                        e.blockchain_deal_id,
+                        e.blockchain_tx,
+                        e.created_at,
+                        CASE 
+                            WHEN e.seller_wallet = %s THEN e.buyer_wallet
+                            ELSE e.seller_wallet
+                        END AS counterparty_wallet,
+                        COALESCE(u.name, 'Unknown Party') AS counterparty_name,
+                        CASE 
+                            WHEN e.seller_wallet = %s THEN 'inflow'
+                            ELSE 'outflow'
+                        END AS direction
+                    FROM escrow_contracts e
+                    LEFT JOIN users u ON u.wallet_address = (
+                        CASE 
+                            WHEN e.seller_wallet = %s THEN e.buyer_wallet
+                            ELSE e.seller_wallet
+                        END
+                    )
+                    WHERE e.buyer_wallet = %s OR e.seller_wallet = %s
+                    ORDER BY e.created_at DESC
+                    LIMIT %s
+                """
+                params = (wallet_address, wallet_address, wallet_address, wallet_address, wallet_address, limit)
+
+
+            else:
+                query = """
+                    SELECT
+                        e.escrow_id,
+                        e.buyer_wallet,
+                        e.seller_wallet,
+                        e.amount,
+                        e.status,
+                        e.initiator_wallet,
+                        e.deadline,
+                        e.blockchain_deal_id,
+                        e.blockchain_tx,
+                        e.created_at,
+                        NULL as counterparty_wallet,
+                        NULL as counterparty_name,
+                        NULL as direction
+                    FROM escrow_contracts e
+                    ORDER BY e.created_at DESC
+                    LIMIT %s
+                """
+                params = (limit,)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            contracts = []
+            for row in rows:
+                r = dict_from_row(row)
+                # Serialize datetime/date objects
+                for field in ('deadline', 'created_at'):
+                    if r.get(field) and hasattr(r[field], 'isoformat'):
+                        r[field] = r[field].isoformat()
+                # Convert amount to float safely
+                if r.get('amount') is not None:
+                    try:
+                        r['amount'] = float(r['amount'])
+                    except (TypeError, ValueError):
+                        r['amount'] = 0.0
+                # Convert blockchain_deal_id to string safely
+                if r.get('blockchain_deal_id') is not None:
+                    r['blockchain_deal_id'] = str(r['blockchain_deal_id'])
+                contracts.append(r)
+            return contracts
+    except Exception as e:
+        logger.error(f"get_escrow_contracts failed: {e}")
+        return []
+
+
+def get_blockchain_transactions(wallet_address: str = None, limit: int = 50):
+    """
+    Fetch blockchain payment proofs from the OpsHub-managed payments table.
+    If wallet_address provided, only returns payments for that wallet.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Check table exists
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM information_schema.tables
+                WHERE table_name = 'escrow_contracts'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                return []
+
+            if wallet_address:
+                query = """
+                    SELECT
+                        id,
+                        razorpay_payment_id,
+                        from_wallet,
+                        to_wallet,
+                        amount,
+                        metadata_hash,
+                        blockchain_tx,
+                        created_at
+                    FROM payments
+                    WHERE from_wallet = %s OR to_wallet = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """
+
+            else:
+                query = """
+                    SELECT
+                        id,
+                        razorpay_payment_id,
+                        from_wallet,
+                        to_wallet,
+                        amount,
+                        metadata_hash,
+                        blockchain_tx,
+                        created_at
+                    FROM payments
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """
+                params = (limit,)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            txns = []
+            for row in rows:
+                r = dict_from_row(row)
+                if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
+                    r['created_at'] = r['created_at'].isoformat()
+                if r.get('amount') is not None:
+                    try:
+                        r['amount'] = float(r['amount'])
+                    except (TypeError, ValueError):
+                        r['amount'] = 0.0
+                txns.append(r)
+            return txns
+    except Exception as e:
+        logger.error(f"get_blockchain_transactions failed: {e}")
+        return []

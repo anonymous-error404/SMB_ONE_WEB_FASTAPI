@@ -1505,6 +1505,154 @@ async def restock_recommendations_endpoint(authorization: Optional[str] = Header
         logger.error(f"Restock recommendations failed: {e}")
         raise HTTPException(status_code=500, detail=f"Restock recommendations failed: {e}")
 
+# ==================== BLOCKCHAIN SMART CONTRACTS ENDPOINTS ====================
+
+@app.get("/api/blockchain/analytics")
+async def blockchain_analytics_endpoint(authorization: Optional[str] = Header(None)):
+    """
+    Get blockchain escrow analytics for the authenticated user.
+    If the user has no wallet (not onboarded), returns blockchain_enabled=False.
+    """
+    try:
+        user_id = get_user_id_from_token(authorization)
+
+        from database import get_user_wallet_address, get_blockchain_analytics
+
+        wallet = None
+        blockchain_enabled = False
+        if user_id is not None:
+            wallet = get_user_wallet_address(user_id)
+            blockchain_enabled = wallet is not None
+
+        if not blockchain_enabled:
+            return JSONResponse(content={
+                "success": True,
+                "blockchain_enabled": False,
+                "data": None,
+                "metadata": {
+                    "processed_at": datetime.now().isoformat(),
+                    "message": "User has not onboarded to blockchain"
+                }
+            })
+
+        analytics = get_blockchain_analytics(wallet_address=wallet)
+
+        return JSONResponse(content={
+            "success": True,
+            "blockchain_enabled": True,
+            "wallet_address": wallet,
+            "data": analytics,
+            "metadata": {
+                "processed_at": datetime.now().isoformat(),
+                "source": "escrow_contracts"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Blockchain analytics failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Blockchain analytics failed: {e}")
+
+
+@app.get("/api/blockchain/contracts")
+async def blockchain_contracts_endpoint(
+    limit: int = Query(100, ge=1, le=500),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Get escrow smart contracts for the authenticated user.
+    Returns blockchain_enabled=False if user has no wallet address.
+    """
+    try:
+        user_id = get_user_id_from_token(authorization)
+
+        from database import get_user_wallet_address, get_escrow_contracts
+
+        wallet = None
+        blockchain_enabled = False
+        if user_id is not None:
+            wallet = get_user_wallet_address(user_id)
+            blockchain_enabled = wallet is not None
+
+        if not blockchain_enabled:
+            return JSONResponse(content={
+                "success": True,
+                "blockchain_enabled": False,
+                "data": [],
+                "metadata": {
+                    "processed_at": datetime.now().isoformat(),
+                    "message": "User has not onboarded to blockchain"
+                }
+            })
+
+        contracts = get_escrow_contracts(wallet_address=wallet, limit=limit)
+
+        return JSONResponse(content={
+            "success": True,
+            "blockchain_enabled": True,
+            "wallet_address": wallet,
+            "data": contracts,
+            "metadata": {
+                "processed_at": datetime.now().isoformat(),
+                "count": len(contracts),
+                "source": "escrow_contracts"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Blockchain contracts failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Blockchain contracts failed: {e}")
+
+
+@app.get("/api/blockchain/transactions")
+async def blockchain_transactions_endpoint(
+    limit: int = Query(50, ge=1, le=200),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Get blockchain payment proof records for the authenticated user.
+    Returns blockchain_enabled=False if user has no wallet address.
+    """
+    try:
+        user_id = get_user_id_from_token(authorization)
+
+        from database import get_user_wallet_address, get_blockchain_transactions
+
+        wallet = None
+        blockchain_enabled = False
+        if user_id is not None:
+            wallet = get_user_wallet_address(user_id)
+            blockchain_enabled = wallet is not None
+
+        if not blockchain_enabled:
+            return JSONResponse(content={
+                "success": True,
+                "blockchain_enabled": False,
+                "data": [],
+                "metadata": {
+                    "processed_at": datetime.now().isoformat(),
+                    "message": "User has not onboarded to blockchain"
+                }
+            })
+
+        txns = get_blockchain_transactions(wallet_address=wallet, limit=limit)
+
+        return JSONResponse(content={
+            "success": True,
+            "blockchain_enabled": True,
+            "wallet_address": wallet,
+            "data": txns,
+            "metadata": {
+                "processed_at": datetime.now().isoformat(),
+                "count": len(txns),
+                "source": "payments"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Blockchain transactions failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Blockchain transactions failed: {e}")
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "endpoints:app",
@@ -1513,3 +1661,4 @@ if __name__ == "__main__":
         reload=os.getenv('ENVIRONMENT', 'development') == 'development',
         log_level=os.getenv('LOG_LEVEL', 'info').lower()
     )
+
