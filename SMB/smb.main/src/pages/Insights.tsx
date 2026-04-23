@@ -28,19 +28,19 @@ const Insights = () => {
         fetchPerformanceData(6),
         fetchBusinessMetrics(),
       ]);
-      
+
       // Check if user has data
       if (statsData && statsData.has_data === false) {
         setHasData(false);
       } else {
         setHasData(true);
       }
-      
+
       setStats(statsData || {});
       setPerformanceData(performance || []);
       setBusinessMetrics(metrics || []);
     };
-    
+
     const loadSecondaryData = async () => {
       // Load charts and insights next
       const [forecast, insights] = await Promise.all([
@@ -50,7 +50,7 @@ const Insights = () => {
       setForecastData(forecast || []);
       setKeyInsights(insights || []);
     };
-    
+
     // Load in stages for progressive rendering
     loadPriorityData().then(() => {
       if (hasData) {
@@ -89,218 +89,218 @@ const Insights = () => {
       {/* Data Available State */}
       {hasData && (
         <>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Revenue Growth"
-          value={`${(stats.revenueGrowth || 0) > 0 ? '+' : ''}${(stats.revenueGrowth || 0).toFixed(1)}%`}
-          change={stats.growthPeriod || 'N/A'}
-          changeType={(stats.revenueGrowth || 0) > 0 ? "positive" : "negative"}
-          icon={TrendingUp}
-        />
-        <StatCard
-          title="Operating Margin"
-          value={`${(stats.operatingMargin || 0).toFixed(1)}%`}
-          change={`${(stats.marginImprovement || 0) > 0 ? '+' : ''}${(stats.marginImprovement || 0).toFixed(1)}% improvement`}
-          changeType={(stats.marginImprovement || 0) > 0 ? "positive" : "negative"}
-          icon={DollarSign}
-        />
-        <StatCard
-          title="Customer Retention"
-          value={`${(stats.customerRetention || 0).toFixed(1)}%`}
-          change={`${(stats.retentionChange || 0) > 0 ? '+' : ''}${(stats.retentionChange || 0).toFixed(1)}% change`}
-          changeType={(stats.retentionChange || 0) > 0 ? "positive" : "negative"}
-          icon={Package}
-        />
-        <StatCard
-          title="Profit Trend"
-          value={`${(stats.profitTrend || 0) > 0 ? '+' : ''}${(stats.profitTrend || 0).toFixed(1)}%`}
-          change={stats.trendPeriod || 'N/A'}
-          changeType={(stats.profitTrend || 0) > 0 ? "positive" : "negative"}
-          icon={TrendingUp}
-        />
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <ChartCard title="Revenue vs Profit Analysis">
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={performanceData || []}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis dataKey="month" className="text-xs" />
-              <YAxis className="text-xs" />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: 'hsl(var(--card))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px'
-                }}
-              />
-              <Legend />
-              <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="costs" fill="hsl(var(--destructive))" radius={[8, 8, 0, 0]} />
-              <Line 
-                type="monotone" 
-                dataKey="profit" 
-                stroke="hsl(var(--success))" 
-                strokeWidth={2}
-                dot={{ fill: 'hsl(var(--success))' }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Business Health Metrics">
-          <BusinessHealthDashboard metrics={businessMetrics} />
-        </ChartCard>
-      </div>
-
-      {/* Sales Forecast Section */}
-      <ChartCard title="7-Day Sales Forecast">
-        <ResponsiveContainer width="100%" height={300}>
-          <ComposedChart data={forecastData || []}>
-            <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-            <XAxis 
-              dataKey="day" 
-              className="text-xs"
-              label={{ value: 'Day of Week', position: 'insideBottom', offset: -5 }}
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              title="Revenue Growth"
+              value={`${(stats.revenueGrowth || 0) > 0 ? '+' : ''}${(stats.revenueGrowth || 0).toFixed(1)}%`}
+              change={stats.growthPeriod || 'N/A'}
+              changeType={(stats.revenueGrowth || 0) > 0 ? "positive" : "negative"}
+              icon={TrendingUp}
             />
-            <YAxis 
-              className="text-xs"
-              label={{ value: 'Revenue (₹)', angle: -90, position: 'insideLeft' }}
+            <StatCard
+              title="Operating Margin"
+              value={`${(stats.operatingMargin || 0).toFixed(1)}%`}
+              change={`${(stats.marginImprovement || 0) > 0 ? '+' : ''}${(stats.marginImprovement || 0).toFixed(1)}% improvement`}
+              changeType={(stats.marginImprovement || 0) > 0 ? "positive" : "negative"}
+              icon={DollarSign}
             />
-            <Tooltip 
-              contentStyle={{ 
-                backgroundColor: 'hsl(var(--card))',
-                border: '1px solid hsl(var(--border))',
-                borderRadius: '8px'
-              }}
-              formatter={(value: number) => `₹${value.toLocaleString('en-IN')}`}
-              labelFormatter={(label, payload) => {
-                if (payload && payload.length > 0) {
-                  const data = payload[0].payload;
-                  let labelText = `${data.day} (${data.date})`;
-                  if (data.special_event) {
-                    labelText += ` - ${data.special_event}`;
-                  }
-                  return labelText;
-                }
-                return label;
-              }}
+            <StatCard
+              title="Customer Retention"
+              value={`${(stats.customerRetention || 0).toFixed(1)}%`}
+              change={`${(stats.retentionChange || 0) > 0 ? '+' : ''}${(stats.retentionChange || 0).toFixed(1)}% change`}
+              changeType={(stats.retentionChange || 0) > 0 ? "positive" : "negative"}
+              icon={Package}
             />
-            <Legend />
-            <Line 
-              type="monotone" 
-              dataKey="predicted_revenue" 
-              stroke="hsl(var(--primary))" 
-              strokeWidth={3}
-              dot={(props: any) => {
-                const { cx, cy, payload } = props;
-                // Highlight special days with a larger, different colored dot
-                if (payload.is_special_day) {
-                  return (
-                    <circle 
-                      cx={cx} 
-                      cy={cy} 
-                      r={6} 
-                      fill="#f59e0b" 
-                      stroke="#dc2626" 
-                      strokeWidth={2}
-                    />
-                  );
-                }
-                return <circle cx={cx} cy={cy} r={4} fill="hsl(var(--primary))" />;
-              }}
-              name="Predicted Revenue"
+            <StatCard
+              title="Profit Trend"
+              value={`${(stats.profitTrend || 0) > 0 ? '+' : ''}${(stats.profitTrend || 0).toFixed(1)}%`}
+              change={stats.trendPeriod || 'N/A'}
+              changeType={(stats.profitTrend || 0) > 0 ? "positive" : "negative"}
+              icon={TrendingUp}
             />
-            <Line 
-              type="monotone" 
-              dataKey="lower_bound" 
-              stroke="hsl(var(--muted-foreground))" 
-              strokeWidth={1}
-              strokeDasharray="5 5"
-              dot={false}
-              name="Lower Bound"
-            />
-            <Line 
-              type="monotone" 
-              dataKey="upper_bound" 
-              stroke="hsl(var(--muted-foreground))" 
-              strokeWidth={1}
-              strokeDasharray="5 5"
-              dot={false}
-              name="Upper Bound"
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-        {/* Special events section */}
-        {forecastData && forecastData.some((d: any) => d.special_event) && (
-          <div className="mt-4">
-            <div className="bg-muted/30 rounded-lg p-3 text-xs">
-              <p className="font-semibold mb-1">Upcoming Special Days:</p>
-              <ul className="space-y-1">
-                {forecastData
-                  .filter((d: any) => d.special_event)
-                  .map((d: any, idx: number) => (
-                    <li key={idx} className="text-muted-foreground">
-                      <span className="font-medium">{d.day}, {d.date}:</span> {d.special_event}
-                    </li>
-                  ))
-                }
-              </ul>
-            </div>
           </div>
-        )}
-      </ChartCard>
 
-      {/* Product-Level Forecasting Section */}
-      <ProductForecast />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <ChartCard title="Revenue vs Profit Analysis">
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={performanceData || []}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="month" className="text-xs" />
+                  <YAxis className="text-xs" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  <Legend />
+                  <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="costs" fill="hsl(var(--destructive))" radius={[8, 8, 0, 0]} />
+                  <Line
+                    type="monotone"
+                    dataKey="profit"
+                    stroke="hsl(var(--success))"
+                    strokeWidth={2}
+                    dot={{ fill: 'hsl(var(--success))' }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </ChartCard>
 
-      {/* Business Insights Section - Full Width */}
-      <div className="p-6 rounded-lg bg-card border border-border">
-        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Activity className="w-5 h-5 text-primary" />
-          Business Insights
-        </h3>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {keyInsights.length > 0 ? (
-            keyInsights.map((insight, index) => {
-                const IconComponent = {
-                  TrendingUp,
-                  TrendingDown,
-                  Package,
-                  DollarSign,
-                  AlertTriangle,
-                  AlertCircle,
-                  Activity,
-                  Star,
-                  Calendar,
-                  Info
-                }[insight.icon] || Info;
-                
-                const severityColors = {
-                  positive: 'text-success',
-                  warning: 'text-warning',
-                  critical: 'text-destructive',
-                  info: 'text-primary'
-                };
+            <ChartCard title="Business Health Metrics">
+              <BusinessHealthDashboard metrics={businessMetrics} />
+            </ChartCard>
+          </div>
 
-                return (
-                  <div key={index} className="space-y-1 p-4 rounded-lg bg-muted/30">
-                    <div className="flex items-start gap-2">
-                      <IconComponent className={`w-4 h-4 mt-0.5 flex-shrink-0 ${severityColors[insight.severity as keyof typeof severityColors]}`} />
-                      <div>
-                        <p className="text-sm font-semibold">{insight.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{insight.message}</p>
-                        <p className="text-xs text-primary mt-1">→ {insight.action}</p>
+          {/* Sales Forecast Section */}
+          <ChartCard title="7-Day Sales Forecast">
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={forecastData || []}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis
+                  dataKey="day"
+                  className="text-xs"
+                  label={{ value: 'Day of Week', position: 'insideBottom', offset: -5 }}
+                />
+                <YAxis
+                  className="text-xs"
+                  label={{ value: 'Revenue (₹)', angle: -90, position: 'insideLeft' }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px'
+                  }}
+                  formatter={(value: number) => `₹${value.toLocaleString('en-IN')}`}
+                  labelFormatter={(label, payload) => {
+                    if (payload && payload.length > 0) {
+                      const data = payload[0].payload;
+                      let labelText = `${data.day} (${data.date})`;
+                      if (data.special_event) {
+                        labelText += ` - ${data.special_event}`;
+                      }
+                      return labelText;
+                    }
+                    return label;
+                  }}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="predicted_revenue"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={3}
+                  dot={(props: any) => {
+                    const { cx, cy, payload } = props;
+                    // Highlight special days with a larger, different colored dot
+                    if (payload.is_special_day) {
+                      return (
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={6}
+                          fill="#f59e0b"
+                          stroke="#dc2626"
+                          strokeWidth={2}
+                        />
+                      );
+                    }
+                    return <circle cx={cx} cy={cy} r={4} fill="hsl(var(--primary))" />;
+                  }}
+                  name="Predicted Revenue"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="lower_bound"
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeWidth={1}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  name="Lower Bound"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="upper_bound"
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeWidth={1}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  name="Upper Bound"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+            {/* Special events section */}
+            {forecastData && forecastData.some((d: any) => d.special_event) && (
+              <div className="mt-4">
+                <div className="bg-muted/30 rounded-lg p-3 text-xs">
+                  <p className="font-semibold mb-1">Upcoming Special Days:</p>
+                  <ul className="space-y-1">
+                    {forecastData
+                      .filter((d: any) => d.special_event)
+                      .map((d: any, idx: number) => (
+                        <li key={idx} className="text-muted-foreground">
+                          <span className="font-medium">{d.day}, {d.date}:</span> {d.special_event}
+                        </li>
+                      ))
+                    }
+                  </ul>
+                </div>
+              </div>
+            )}
+          </ChartCard>
+
+          {/* Product-Level Forecasting Section */}
+          <ProductForecast />
+
+          {/* Business Insights Section - Full Width */}
+          <div className="p-6 rounded-lg bg-card border border-border">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" />
+              Business Insights
+            </h3>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {keyInsights.length > 0 ? (
+                keyInsights.map((insight, index) => {
+                  const IconComponent = {
+                    TrendingUp,
+                    TrendingDown,
+                    Package,
+                    DollarSign,
+                    AlertTriangle,
+                    AlertCircle,
+                    Activity,
+                    Star,
+                    Calendar,
+                    Info
+                  }[insight.icon] || Info;
+
+                  const severityColors = {
+                    positive: 'text-success',
+                    warning: 'text-warning',
+                    critical: 'text-destructive',
+                    info: 'text-primary'
+                  };
+
+                  return (
+                    <div key={index} className="space-y-1 p-4 rounded-lg bg-muted/30">
+                      <div className="flex items-start gap-2">
+                        <IconComponent className={`w-4 h-4 mt-0.5 flex-shrink-0 ${severityColors[insight.severity as keyof typeof severityColors]}`} />
+                        <div>
+                          <p className="text-sm font-semibold">{insight.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{insight.message}</p>
+                          <p className="text-xs text-primary mt-1">→ {insight.action}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            ) : (
-              <p className="text-sm text-muted-foreground">Loading insights...</p>
-            )}
-        </div>
-      </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-muted-foreground">Loading insights...</p>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>

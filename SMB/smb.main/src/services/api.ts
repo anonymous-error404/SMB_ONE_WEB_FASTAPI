@@ -7,7 +7,7 @@ const apiCall = async (endpoint: string, method: string = 'GET') => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    
+
     // Add Authorization header if token exists
     const authData = localStorage.getItem('auth');
     if (authData) {
@@ -16,16 +16,16 @@ const apiCall = async (endpoint: string, method: string = 'GET') => {
         headers.Authorization = `Bearer ${token}`;
       }
     }
-    
+
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method,
       headers,
     });
-    
+
     if (!response.ok) {
       throw new Error(`API call failed: ${response.statusText}`);
     }
-    
+
     const result = await response.json();
     return result.data;
   } catch (error) {
@@ -36,7 +36,7 @@ const apiCall = async (endpoint: string, method: string = 'GET') => {
 };
 
 // Simulated API delay to mimic real network requests (for fallback data)
-const simulateDelay = (ms: number = 300) => 
+const simulateDelay = (ms: number = 300) =>
   new Promise(resolve => setTimeout(resolve, ms));
 
 // ============= Dashboard APIs =============
@@ -84,7 +84,7 @@ const apiCallWithData = async (endpoint: string, method: string = 'POST', data: 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    
+
     // Add Authorization header if token exists
     const authData = localStorage.getItem('auth');
     if (authData) {
@@ -93,17 +93,17 @@ const apiCallWithData = async (endpoint: string, method: string = 'POST', data: 
         headers.Authorization = `Bearer ${token}`;
       }
     }
-    
+
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method,
       headers,
       body: data ? JSON.stringify(data) : undefined,
     });
-    
+
     if (!response.ok) {
       throw new Error(`API call failed: ${response.statusText}`);
     }
-    
+
     const result = await response.json();
     return result;
   } catch (error) {
@@ -174,11 +174,45 @@ export const fetchQuickStats = async () => {
   return data; // Return actual data or null
 };
 
-// ============= Contracts APIs =============
+// ============= Contracts APIs (legacy) =============
 
 export const fetchContracts = async () => {
   const data = await apiCall('/api/contracts');
   return data; // Return actual data or null
+};
+
+// ============= Blockchain Smart Contracts APIs =============
+
+/** Returns the full response so the caller can check `blockchain_enabled`. */
+const apiCallFull = async (endpoint: string) => {
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const authData = localStorage.getItem('auth');
+    if (authData) {
+      const { token } = JSON.parse(authData);
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'GET', headers });
+    if (!response.ok) throw new Error(`API call failed: ${response.statusText}`);
+    return await response.json();
+  } catch (error) {
+    console.error(`Error calling ${endpoint}:`, error);
+    return null;
+  }
+};
+
+export const fetchBlockchainAnalytics = async () => {
+  return await apiCallFull('/api/blockchain/analytics');
+};
+
+export const fetchEscrowContracts = async (limit = 100) => {
+  return await apiCallFull(`/api/blockchain/contracts?limit=${limit}`);
+};
+
+export const fetchBlockchainTransactions = async (limit = 50) => {
+  return await apiCallFull(`/api/blockchain/transactions?limit=${limit}`);
 };
 
 // ============= Product Forecasting APIs =============
@@ -201,9 +235,9 @@ export const fetchRestockRecommendations = async () => {
 };
 
 // ============= Auth APIs =============
-export const registerUser = async (payload: { 
-  name: string; 
-  email: string; 
+export const registerUser = async (payload: {
+  name: string;
+  email: string;
   password: string;
   securityQuestion: string;
   securityAnswer: string;
